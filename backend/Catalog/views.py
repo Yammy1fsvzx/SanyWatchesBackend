@@ -1,4 +1,6 @@
-from rest_framework import viewsets
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from .models import Category, ProductType, Brand, Currency, Parameter, ProductParameter, ProductImage, Tag, ProductTag, Report, Product
 from .serializers import (CategorySerializer, ProductTypeSerializer, BrandSerializer, CurrencySerializer,
                           ParameterSerializer, ProductParameterSerializer, ProductImageSerializer,
@@ -44,6 +46,44 @@ class ReportViewSet(viewsets.ModelViewSet):
     queryset = Report.objects.all()
     serializer_class = ReportSerializer
 
+
+class ProductPagination(PageNumberPagination):
+    page_size = 30
+    page_size_query_param = 'limit'
+    max_page_size = 100
+
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
+    pagination_class = ProductPagination
+
+    def list(self, request, *args, **kwargs):
+        category_id = request.query_params.get('category')
+        parameters = request.data.get('parameters', [])
+        
+        limit = request.query_params.get('limit', self.pagination_class.page_size)
+        try:
+            limit = min(int(limit), self.pagination_class.max_page_size)
+        except (ValueError, TypeError):
+            limit = self.pagination_class.page_size
+
+        queryset = self.queryset
+
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        if parameters:
+            for param in parameters:
+                param_name = param.get('name')
+                param_value = param.get('value')
+                if param_name and param_value:
+                    queryset = queryset.filter(parameters__parameter__name=param_name, parameters__value=param_value)
+
+        self.pagination_class.page_size = limit
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
